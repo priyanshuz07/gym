@@ -8,7 +8,7 @@ import {
   Users, UserX, X
 } from 'lucide-react';
 import type { AppState } from './model';
-import { formatDate, makeEmpty, makeSeed, notifications, today } from './model';
+import { formatDate, makeSeed, notifications, today } from './model';
 import { Dashboard } from './Dashboard';
 import { MemberModal, MemberProfilePage, MembersPage } from './Members';
 import { PlansPage, ReportsPage, SettingsPage } from './Secondary';
@@ -19,7 +19,7 @@ type Page = 'dashboard' | MembersView | 'plans' | 'reports' | 'settings' | 'prof
 export type MemberAction = {type: 'add' | 'edit' | 'view' | 'renew' | 'deactivate' | 'reactivate' | 'delete'; memberId?: string};
 type Route = {page: Page; id?: string};
 type Toast = {text: string; error: boolean};
-const demo = import.meta.env.MODE === 'demo' || import.meta.env.DEV;
+const demo = true;
 const demoDataKey = 'ironclad-demo-v1';
 const SidebarNavigation = [
   {label: 'Overview', links: [{id: 'dashboard', label: 'Dashboard', icon: LayoutGrid}]},
@@ -54,20 +54,6 @@ function demoState(): AppState {
   return makeSeed();
 }
 
-async function api(path: string, options: RequestInit = {}) {
-  return fetch('/api/' + path, {...options, headers: {
-    Accept: 'application/json', ...(options.body ? {'Content-Type': 'application/json'} : {}), ...options.headers
-  }});
-}
-
-async function apiError(response: Response) {
-  try {
-    const body = await response.json();
-    if (typeof body.error === 'string') return new Error(body.error);
-  } catch { /* Use a general message when there is no JSON response. */ }
-  return new Error('The server could not complete the request. Please try again.');
-}
-
 function initialName(name: string) {
   return name.trim().split(/\s+/).map(word => word[0]).slice(0, 2).join('').toUpperCase() || 'GF';
 }
@@ -81,7 +67,7 @@ function Brand({logo, name}: {logo?: string; name?: string}) {
 }
 
 function App() {
-  const [state, setState] = useState<AppState | null>(() => demo ? demoState() : null);
+  const [state, setState] = useState<AppState>(() => demoState());
   const [route, setRoute] = useState<Route>(routeNow);
   const [action, setAction] = useState<MemberAction | null>(null);
   const [previous, setPrevious] = useState<MembersView | 'dashboard'>('members');
@@ -92,8 +78,6 @@ function App() {
   const [renewPicker, setRenewPicker] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [renderDay, setRenderDay] = useState(today);
-  const revision = useRef('"0"');
-  const saving = useRef(false);
   const reduceMotion = useReducedMotion();
   const toastTimer = useRef<number | undefined>(undefined);
   const notify = useCallback((text: string, error = false) => {
@@ -109,43 +93,7 @@ function App() {
     setSearchOpen(false);
   }, []);
 
-  const loadState = useCallback(async (email?: string) => {
-    const response = await api('state');
-    revision.current = response.headers.get('etag') || '"0"';
-    if (response.status === 404) {
-      const fresh = makeEmpty();
-      if (email) fresh.settings.ownerEmail = email;
-      const saved = await api('state', {method: 'PUT', headers: {'If-Match': revision.current}, body: JSON.stringify(fresh)});
-      if (saved.status === 412) {
-        const latest = await api('state');
-        if (!latest.ok) throw await apiError(latest);
-        revision.current = latest.headers.get('etag') || revision.current;
-        setState(await latest.json());
-        return;
-      }
-      if (!saved.ok) throw await apiError(saved);
-      revision.current = saved.headers.get('etag') || revision.current;
-      setState(await saved.json());
-      return;
-    }
-    if (!response.ok) throw await apiError(response);
-    setState(await response.json());
-  }, []);
-
-  const loadWorkspace = useCallback(async () => {
-    if (demo) {
-      setState(demoState());
-      return;
-    }
-    try {
-      await loadState();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'The workspace could not be loaded.', true);
-    }
-  }, [loadState, notify]);
-
   useEffect(() => {
-    void loadWorkspace();
     const handleRoute = () => {
       setRoute(routeNow());
       setAction(null);
@@ -157,7 +105,7 @@ function App() {
       window.removeEventListener('hashchange', handleRoute);
       window.clearInterval(clock);
     };
-  }, [loadWorkspace]);
+  }, []);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -175,41 +123,21 @@ function App() {
   }, []);
 
   const commit = useCallback(async (next: AppState, message: string) => {
-    if (saving.current) throw new Error('A change is already being saved. Try again in a moment.');
-    saving.current = true;
+    setState(next);
     try {
-      if (demo) {
-        localStorage.setItem(demoDataKey, JSON.stringify(next));
-        setState(next);
-      } else {
-        const response = await api('state', {method: 'PUT', headers: {'If-Match': revision.current}, body: JSON.stringify(next)});
-        if (response.status === 401) {
-          setState(null);
-          throw new Error('The workspace could not be updated.');
-        }
-        if (response.status === 412 || response.status === 409) {
-          await loadState();
-          throw new Error('This workspace changed in another session. Review the latest details and try again.');
-        }
-        if (!response.ok) throw await apiError(response);
-        revision.current = response.headers.get('etag') || revision.current;
-        setState(await response.json());
-      }
+      localStorage.setItem(demoDataKey, JSON.stringify(next));
       if (message) notify(message);
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'Your changes could not be saved.', true);
-      throw error;
-    } finally { saving.current = false; }
-  }, [loadState, notify]);
+    } catch {
+      notify('Changes are available for this session but could not be saved in this browser.', true);
+    }
+  }, [notify]);
 
-  async function updateAccount(data: {currentPassword: string; password?: string; email?: string}) {
-    if (demo) return;
-    const response = await api('account', {method: 'PATCH', body: JSON.stringify(data)});
-    if (!response.ok) throw await apiError(response);
+  async function updateAccount(_data: {currentPassword: string; password?: string; email?: string}) {
+    return;
   }
 
-  const allAlerts = useMemo(() => state ? notifications(state) : [], [state, renderDay]);
-  const unread = state ? allAlerts.filter(alert => !state.readNotifications.includes(alert.id)).length : 0;
+  const allAlerts = useMemo(() => notifications(state), [state, renderDay]);
+  const unread = allAlerts.filter(alert => !state.readNotifications.includes(alert.id)).length;
   const visibleName = SidebarNavigation.flatMap(group => [...group.links]).find(link => link.id === route.page)?.label || 'Member Profile';
 
   function memberAction(next: MemberAction) {
@@ -222,7 +150,6 @@ function App() {
     } else setAction(next);
   }
 
-  if (!state) return <div className="loading-screen"><Brand/><div className="loading-bar" role="status" aria-label="Loading workspace"/></div>;
   const owner = state.settings.ownerName || 'Gym Owner';
 
   return <div className={'app-shell' + (collapsed ? ' collapsed' : '')}>

@@ -1,18 +1,17 @@
 # Ironclad Fitness
 
-An owner-only gym workspace for member records, membership plans, expiry and renewals, notifications, and reports. The interface uses React, TypeScript, Tailwind CSS, Framer Motion, Lucide, and Recharts. Express serves the authenticated application and MongoDB stores records and sessions.
+Ironclad Fitness is a frontend-only gym management demo built with React, TypeScript, Tailwind CSS, Framer Motion, Lucide, and Recharts. It opens directly into a sample dashboard and stores demo changes in the browser's local storage. It does not use a backend, API, database, or authentication service.
 
-## Run the authenticated app
+## Run locally
 
-1. Install Node.js 22 or later and provision a MongoDB 6 or later database.
-2. Run `npm ci` and `npm run build`.
-3. Copy `server/.env.example` to `server/.env` and configure the database URL and first owner account.
-4. Run `npm start`, open `http://localhost:3000`, and sign in with your owner credentials.
+1. Install Node.js 22 or later.
+2. Run `npm ci`.
+3. Run `npm run dev` and open the local Vite URL.
 
-See [server setup](server/README.md) for HTTPS deployment, account initialization, and persistence details.
+Run `npm run check` for TypeScript verification and `npm run build` to create the static production site in `dist`.
 
-## Preview with sample data
+## Deploy to Vercel
 
-Run `npm run dev` for the development demo. `npm run build:demo` builds the private Sites preview with fictional members and browser-local changes. Use the authenticated build for real member records.
+Use the repository root as the project root. Vercel builds with `npm run build` and serves the static output from `dist`; no environment variables, server functions, or database are required. The app uses hash-based navigation, so page navigation and refreshes stay on the static entry point.
 
-Run `npm run check` for TypeScript verification.
+Demo member records, plans, settings, and notifications are saved in the current browser. Different browsers have separate demo data.
