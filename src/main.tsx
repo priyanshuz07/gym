@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
 import {
   Activity, Bell, CalendarDays, CalendarClock, ChartNoAxesCombined, Check, ChevronDown, ChevronLeft,
-  ChevronRight, CircleAlert, CircleCheck, CreditCard, Dumbbell, LayoutGrid, LogOut, Menu,
-  PanelLeftClose, PanelLeftOpen, Plus, Search, Settings as SettingsIcon, ShieldCheck, UserCheck,
+  ChevronRight, CircleAlert, CircleCheck, CreditCard, Dumbbell, LayoutGrid, Menu,
+  PanelLeftClose, PanelLeftOpen, Plus, Search, Settings as SettingsIcon, UserCheck,
   Users, UserX, X
 } from 'lucide-react';
 import type { AppState } from './model';
@@ -21,7 +21,6 @@ type Route = {page: Page; id?: string};
 type Toast = {text: string; error: boolean};
 const demo = import.meta.env.MODE === 'demo' || import.meta.env.DEV;
 const demoDataKey = 'ironclad-demo-v1';
-const demoSessionKey = 'ironclad-demo-signed-out';
 const SidebarNavigation = [
   {label: 'Overview', links: [{id: 'dashboard', label: 'Dashboard', icon: LayoutGrid}]},
   {label: 'Memberships', links: [
@@ -83,7 +82,6 @@ function Brand({logo, name}: {logo?: string; name?: string}) {
 
 function App() {
   const [state, setState] = useState<AppState | null>(() => demo ? demoState() : null);
-  const [auth, setAuth] = useState<boolean | null>(() => demo ? localStorage.getItem(demoSessionKey) !== '1' : null);
   const [route, setRoute] = useState<Route>(routeNow);
   const [action, setAction] = useState<MemberAction | null>(null);
   const [previous, setPrevious] = useState<MembersView | 'dashboard'>('members');
@@ -93,7 +91,6 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [renewPicker, setRenewPicker] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [loadError, setLoadError] = useState('');
   const [renderDay, setRenderDay] = useState(today);
   const revision = useRef('"0"');
   const saving = useRef(false);
@@ -135,23 +132,20 @@ function App() {
     setState(await response.json());
   }, []);
 
-  const loadSession = useCallback(async () => {
-    if (demo) return;
-    setLoadError('');
-    try {
-      const response = await api('session');
-      if (!response.ok) throw await apiError(response);
-      const session = await response.json();
-      if (session.authenticated) await loadState(session.email);
-      setAuth(Boolean(session.authenticated));
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'The workspace could not be loaded.');
-      setAuth(false);
+  const loadWorkspace = useCallback(async () => {
+    if (demo) {
+      setState(demoState());
+      return;
     }
-  }, [loadState]);
+    try {
+      await loadState();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'The workspace could not be loaded.', true);
+    }
+  }, [loadState, notify]);
 
   useEffect(() => {
-    void loadSession();
+    void loadWorkspace();
     const handleRoute = () => {
       setRoute(routeNow());
       setAction(null);
@@ -163,11 +157,11 @@ function App() {
       window.removeEventListener('hashchange', handleRoute);
       window.clearInterval(clock);
     };
-  }, [loadSession]);
+  }, [loadWorkspace]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && auth) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setSearchOpen(open => !open);
       }
@@ -178,37 +172,7 @@ function App() {
     };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [auth]);
-
-  async function login(email: string, password: string) {
-    if (demo) {
-      localStorage.removeItem(demoSessionKey);
-      setState(demoState());
-      setAuth(true);
-      navigate('dashboard');
-      return;
-    }
-    const response = await api('login', {method: 'POST', body: JSON.stringify({email, password})});
-    if (!response.ok) throw await apiError(response);
-    await loadState(email);
-    setAuth(true);
-    setLoadError('');
-    if (!location.hash || routeNow().page === 'profile') navigate('dashboard');
-  }
-
-  async function logout() {
-    try {
-      if (demo) localStorage.setItem(demoSessionKey, '1');
-      else {
-        const response = await api('logout', {method: 'POST'});
-        if (!response.ok) throw await apiError(response);
-        setState(null);
-      }
-      setAuth(false);
-      setAction(null);
-      navigate('dashboard');
-    } catch (error) { notify(error instanceof Error ? error.message : 'Sign out failed.', true); }
-  }
+  }, []);
 
   const commit = useCallback(async (next: AppState, message: string) => {
     if (saving.current) throw new Error('A change is already being saved. Try again in a moment.');
@@ -221,8 +185,7 @@ function App() {
         const response = await api('state', {method: 'PUT', headers: {'If-Match': revision.current}, body: JSON.stringify(next)});
         if (response.status === 401) {
           setState(null);
-          setAuth(false);
-          throw new Error('Your session expired. Sign in to continue.');
+          throw new Error('The workspace could not be updated.');
         }
         if (response.status === 412 || response.status === 409) {
           await loadState();
@@ -259,8 +222,7 @@ function App() {
     } else setAction(next);
   }
 
-  if (auth === null) return <div className="loading-screen"><Brand/><div className="loading-bar" role="status" aria-label="Loading workspace"/></div>;
-  if (!auth || !state) return <Login onLogin={login} error={loadError} />;
+  if (!state) return <div className="loading-screen"><Brand/><div className="loading-bar" role="status" aria-label="Loading workspace"/></div>;
   const owner = state.settings.ownerName || 'Gym Owner';
 
   return <div className={'app-shell' + (collapsed ? ' collapsed' : '')}>
@@ -287,7 +249,6 @@ function App() {
             {state.settings.profileImage ? <img className="owner-avatar" src={state.settings.profileImage} alt=""/> : <span className="owner-avatar">{initialName(owner)}</span>}
             <span className="owner-details"><strong>{owner}</strong><small>Gym Owner</small></span>
           </button>
-          <button className="icon-button logout-button" aria-label="Sign out" title="Sign out" onClick={() => void logout()}><LogOut size={17}/></button>
         </div>
       </div>
     </aside>
@@ -358,34 +319,6 @@ function MemberSearch({state, renew, onClose, onSelect}: {state: AppState; renew
       </div>
     </div>
   </dialog>;
-}
-
-function Login({onLogin, error}: {onLogin: (email: string, password: string) => Promise<void>; error: string}) {
-  const [message, setMessage] = useState(error);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => setMessage(error), [error]);
-  return <div className="login-screen">
-    <div className="login-form-wrap"><Brand/><form className="login-form" onSubmit={async event => {
-      event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      setBusy(true);
-      setMessage('');
-      try { await onLogin(String(data.get('email') || ''), String(data.get('password') || '')); }
-      catch (error) {setMessage(error instanceof Error ? error.message : 'Sign-in failed.');}
-      finally {setBusy(false);}
-    }}>
-      <span className="login-tag"><ShieldCheck size={16}/> Owner access</span>
-      <h1>Welcome back.</h1>
-      <p>{demo ? 'Explore your private workspace with sample gym data.' : 'Sign in to manage your gym.'}</p>
-      {!demo && <>
-        <label>Email address <input required type="email" name="email" autoComplete="username" placeholder="owner@yourgym.com"/></label>
-        <label>Password <input required type="password" name="password" autoComplete="current-password" placeholder="Enter your password"/></label>
-      </>}
-      {message && <div className="login-error" role="alert">{message}</div>}
-      <button className="btn primary" disabled={busy} type="submit">{busy ? 'Signing in…' : demo ? 'Open demo workspace' : 'Sign in'}</button>
-    </form></div>
-    <div className="login-visual" aria-hidden="true"><div className="hero-grid"/><img src="/dumbbell.webp" alt="" /></div>
-  </div>;
 }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

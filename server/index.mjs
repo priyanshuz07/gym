@@ -117,8 +117,9 @@ async function findSession(req) {
 }
 
 async function requireOwner(req, res, next) {
-  req.ownerSession = await findSession(req);
-  if (!req.ownerSession) return res.status(401).json({ error: 'Sign in to continue.' });
+  const owner = await owners.findOne({ _id: ownerId });
+  if (!owner) return res.status(503).json({ error: 'The gym owner account could not be loaded.' });
+  req.ownerSession = { owner };
   next();
 }
 
